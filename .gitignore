@@ -1,0 +1,38 @@
+# Byte-compiled/optimized/caching files
+__pycache__/
+__pycache__
+*.py[cod]
+*$py.class$
+
+# Virtual environment
+.venv/
+.venv
+venv/
+ENV/
+
+# Environment variables
+.env
+.env.*
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE configuration files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build/dist files
+build/
+dist/
+*.egg-info/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Logs
+*.log
