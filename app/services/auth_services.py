@@ -9,9 +9,20 @@ from app.utils import verify_password, create_access_token, generate_hash
 from app.utils import create_access_token
 from datetime import timedelta , datetime, timezone
 from app.utils import decode_token
+from app.exception_utils import AppException
+from app.exception_utils import (
+    AUTH_EMAIL_OR_USERNAME_EXISTS,
+    AUTH_INVALID_CREDENTIALS,
+    AUTH_INVALID_TOKEN,
+    AUTH_TOKEN_EXPIRED,
+    AUTH_USER_NOT_FOUND_FOR_TOKEN,
+    AUTH_TOKEN_MISMATCH,
+    INTERNAL_SERVER_ERROR
+)
 import logging
-
 import jwt
+
+
 
 REFRESH_TOKEN_EXPIRY = 2
 
@@ -50,27 +61,29 @@ async def register(register_data: UserCreateModel,
     except IntegrityError as e:
         await session.rollback()
         logging.exception(e)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Email address or username already exists"
+            detail="Email address or username already exists",
+            error_code=AUTH_EMAIL_OR_USERNAME_EXISTS
         )
         
     except SQLAlchemyError as e:
         await session.rollback()
         logging.exception(e) 
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="A database error occurred during user creation."
+            detail="A database error occurred during user creation.",
+            error_code=INTERNAL_SERVER_ERROR
         )
     
     except Exception as e:
         await session.rollback()
         logging.exception(e)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred."
+            detail="An unexpected error occurred.",
+            error_code=INTERNAL_SERVER_ERROR
         )
-        
     
 
 async def login(login_data: UserLoginModel, session: AsyncSession):
@@ -81,48 +94,58 @@ async def login(login_data: UserLoginModel, session: AsyncSession):
     user = result.scalars().first()
     
     if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_401_UNAUTHORIZED, 
             detail="Invalid email or password",
+            error_code=AUTH_INVALID_CREDENTIALS,
             headers={"WWW-Authenticate": "Bearer"}
         )
-    
-    access_token = create_access_token(
-        user_data={'email': user.email, 'user_id': str(user.id)}
-    )
-    refresh_token = create_access_token(
-        user_data={'email': user.email, 'user_id': str(user.id)},
-        refresh=True,
-        expiry=timedelta(days=REFRESH_TOKEN_EXPIRY)
-    )
-
-    user.refresh_token = refresh_token
-    user.refresh_token_expires_at = datetime.now() + timedelta(days=7)
-    session.add(user)
-    
-    await session.commit()
-    
-    
-    return {
-        "message": "Login Successful",
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "user": UserReadModel(
-            id=str(user.id),
-            email=user.email,
-            username=user.username
+    try:
+        access_token = create_access_token(
+            user_data={'email': user.email, 'user_id': str(user.id)}
         )
-    }
+        refresh_token = create_access_token(
+            user_data={'email': user.email, 'user_id': str(user.id)},
+            refresh=True,
+            expiry=timedelta(days=REFRESH_TOKEN_EXPIRY)
+        )
+
+        user.refresh_token = refresh_token
+        user.refresh_token_expires_at = datetime.now() + timedelta(days=7)
+        session.add(user)
+        
+        await session.commit()
+        
+        
+        return {
+            "message": "Login Successful",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "user": UserReadModel(
+                id=str(user.id),
+                email=user.email,
+                username=user.username
+            )
+        }
     
+    except Exception as e:
+        await session.rollback()
+        logging.error(f"Error during login token generation or db commit: {str(e)}", exc_info=True)
+        raise AppException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process login.",
+            error_code=INTERNAL_SERVER_ERROR
+        )
     
 async def refresh_access_token_service(refresh_token: str,
                                session: AsyncSession):
     try:
         token_data = decode_token(refresh_token)
         if not token_data:
-            raise HTTPException(
+            raise AppException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
+                detail="Invalid token",
+                error_code=AUTH_INVALID_TOKEN
             )
         
         user_id = token_data['user']['user_id']
@@ -130,19 +153,22 @@ async def refresh_access_token_service(refresh_token: str,
         user = user.scalar_one_or_none()
         
         if not user:
-            raise HTTPException(
+            raise AppException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found"
+                detail="User not found",
+                error_code=AUTH_USER_NOT_FOUND_FOR_TOKEN
             )
         if user.refresh_token != refresh_token:
-            raise HTTPException(
+            raise AppException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Refresh token mismatch"
+                detail="Refresh token mismatch",
+                error_code=AUTH_TOKEN_MISMATCH
             )
         if user.refresh_token_expires_at < datetime.now(timezone.utc):
-            raise HTTPException(
+            raise AppException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Refresh token expired"
+                detail="Refresh token expired",
+                error_code=AUTH_TOKEN_EXPIRED
             )
             
         new_access_token = create_access_token(
@@ -161,18 +187,21 @@ async def refresh_access_token_service(refresh_token: str,
         }
         
     except jwt.ExpiredSignatureError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token expired"
+            detail="Refresh token expired",
+            error_code=AUTH_TOKEN_EXPIRED
         )
     except jwt.InvalidTokenError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token"
+            detail="Invalid refresh token",
+            error_code=AUTH_INVALID_TOKEN
         )
     except Exception as e:
         logging.error(f"Error refreshing token: {str(e)}", exc_info=True)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to refresh token"
+            detail="Failed to refresh token",
+            error_code=INTERNAL_SERVER_ERROR
         )

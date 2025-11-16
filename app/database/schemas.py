@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, field_validator, EmailStr
 from fastapi_users import schemas
 import uuid
 import re
+from typing import Any, Optional
 
 
 class UserReadModel(BaseModel):
@@ -167,3 +168,37 @@ class UserDetailResponse(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+    
+class ErrorResponse(BaseModel):
+    detail: str
+    
+    
+class ErrorResponse(BaseModel):
+    """Standard error response"""
+    detail: str
+    error_code: str  # ← Error categorization
+    timestamp: str  # ← When error occurred
+    path: Optional[str] = None  # ← Which endpoint failed
+
+class ValidationErrorResponse(ErrorResponse):
+    """Validation errors"""
+    errors: list[dict[str, Any]] 
+    
+    
+class AppErrorResponse(BaseModel):
+    
+    detail: str
+    error_code: str
+    timestamp: str  
+    path: str
+    
+    class Config:
+        from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "detail": "User not found",
+                "error_code": "USER_001",
+                "timestamp": "2025-11-16T19:30:00Z",
+                "path": "/users/admin/some-uuid"
+            }
+        }

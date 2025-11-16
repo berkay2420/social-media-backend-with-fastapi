@@ -1,5 +1,5 @@
 import os, uuid, shutil, tempfile
-from fastapi import HTTPException, UploadFile, Depends, status
+from fastapi import UploadFile, Depends, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,6 +8,20 @@ from app.database.db import Post, Upvote, Comment, User
 from app.database.images import imagekit
 from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
 from app.database.schemas import PostCreateModel, UpvoteCreateModel, UpvoteResponse, CommentCreateModel, UserReadModel, CommentResponse, PostResponseModel
+from app.exception_utils import AppException
+from app.exception_utils import (
+    POST_INVALID_ID_FORMAT,
+    POST_NOT_FOUND,
+    POST_INVALID_FILE_TYPE,
+    POST_FILE_TOO_LARGE,
+    POST_UPLOAD_FAILED,
+    POST_ALREADY_UPVOTED,
+    UPVOTE_NOT_FOUND,
+    POST_INVALID_SORT_KEY,
+    PERMISSION_DENIED,
+    INTERNAL_SERVER_ERROR,
+    INVALID_PAGINATION
+)
 
 from uuid import UUID
 import logging
@@ -19,15 +33,17 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 async def validate_file(file: UploadFile) -> None:
     """Validate file type and size"""
     if file.content_type not in ALLOWED_FILE_TYPES:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid file type. Allowed: {ALLOWED_FILE_TYPES}"
+            detail=f"Invalid file type. Allowed: {ALLOWED_FILE_TYPES}",
+            error_code=POST_INVALID_FILE_TYPE
         )
     
     if file.size and file.size > MAX_FILE_SIZE:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File size exceeds {MAX_FILE_SIZE / 1024 / 1024}MB"
+            detail=f"File size exceeds {MAX_FILE_SIZE / 1024 / 1024}MB",
+            error_code=POST_FILE_TOO_LARGE
         )
 
 async def upload_post(post_data: PostCreateModel, 
@@ -57,9 +73,10 @@ async def upload_post(post_data: PostCreateModel,
             
         if upload_result.response_metadata.http_status_code != 200:
             logging.error(f"ImageKit upload failed: {upload_result}")
-            raise HTTPException(
+            raise AppException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to upload file to storage"
+                detail="Failed to upload file to storage",
+                error_code=POST_UPLOAD_FAILED
             )
         
         file_type = "video" if file.content_type.startswith("video/") else "image"
@@ -78,14 +95,15 @@ async def upload_post(post_data: PostCreateModel,
         
         logging.info(f"Post created successfully: {post.id} by user {user.id}")
         return post
-    except HTTPException:
+    except AppException: # Re-raise validation errors
         raise
     except Exception as e:
         logging.error(f"Error uploading post: {str(e)}", exc_info=True)
         await session.rollback()
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error during upload"
+            detail="Internal server error during upload",
+            error_code=INTERNAL_SERVER_ERROR
         )
     finally:
         # Cleanup
@@ -103,16 +121,28 @@ async def delete_post(post_id: str,
     try:
         post_uuid = UUID(post_id)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid post ID format")
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Invalid post ID format",
+            error_code=POST_INVALID_ID_FORMAT
+        )
     
     result = await session.execute(select(Post).where(Post.id == post_uuid))
     post = result.scalar_one_or_none()
     
     if not post:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Post not found",
+            error_code=POST_NOT_FOUND
+        )
     
-    if post.user_id != user.id and not  user.is_superuser:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    if post.user_id != user.id and not user.is_superuser:
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Permission denied",
+            error_code=PERMISSION_DENIED
+        )
     
     try:
         await session.delete(post)
@@ -120,7 +150,11 @@ async def delete_post(post_id: str,
         return {"message": "Post deleted successfully"}
     except Exception as e:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete post")
+        raise AppException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Failed to delete post",
+            error_code=INTERNAL_SERVER_ERROR
+        )
 
 async def upvote_post(post_id: str, 
                       user: User, 
@@ -128,9 +162,10 @@ async def upvote_post(post_id: str,
     try:
         post_uuid = UUID(post_id)
     except ValueError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid post ID format"
+            detail="Invalid post ID format",
+            error_code=POST_INVALID_ID_FORMAT
         )
     
     result = await session.execute(
@@ -141,9 +176,10 @@ async def upvote_post(post_id: str,
     post = result.scalar_one_or_none()
     
     if not post:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Post not found"
+            detail="Post not found",
+            error_code=POST_NOT_FOUND
         )
     
     existing = await session.execute(
@@ -154,9 +190,10 @@ async def upvote_post(post_id: str,
     )
     
     if existing.scalar_one_or_none():
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Already upvoted"
+            detail="Already upvoted",
+            error_code=POST_ALREADY_UPVOTED
         )
     
     try:
@@ -168,9 +205,10 @@ async def upvote_post(post_id: str,
         return UpvoteResponse(message="Post upvoted successfully")
     except Exception as e:
         await session.rollback()
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upvote post"
+            detail="Failed to upvote post",
+            error_code=INTERNAL_SERVER_ERROR
         )
 
 async def remove_upvote(
@@ -181,9 +219,10 @@ async def remove_upvote(
     try:
         post_uuid = UUID(post_id)
     except ValueError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid post ID format"
+            detail="Invalid post ID format",
+            error_code=POST_INVALID_ID_FORMAT
         )
     
     upvote = await session.execute(
@@ -195,9 +234,10 @@ async def remove_upvote(
     upvote_record = upvote.scalar_one_or_none()
     
     if not upvote_record:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Upvote not found"
+            detail="Upvote not found",
+            error_code=UPVOTE_NOT_FOUND
         )
     
     try:
@@ -209,9 +249,10 @@ async def remove_upvote(
     except Exception as e:
         await session.rollback()
         logging.error(f"Error removing upvote: {str(e)}", exc_info=True)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to remove upvote"
+            detail="Failed to remove upvote",
+            error_code=INTERNAL_SERVER_ERROR
         )
 
 
@@ -223,9 +264,10 @@ async def comment_on_post(post_id: str,
     try:
         post_uuid = UUID(post_id)
     except ValueError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid post ID format"
+            detail="Invalid post ID format",
+            error_code=POST_INVALID_ID_FORMAT
         )
     
     post_result = await session.execute(
@@ -234,9 +276,10 @@ async def comment_on_post(post_id: str,
     post = post_result.scalar_one_or_none()
     
     if not post:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Post not found"
+            detail="Post not found",
+            error_code=POST_NOT_FOUND
         )
     
     try:
@@ -259,16 +302,21 @@ async def comment_on_post(post_id: str,
         )
     except Exception as e:
         await session.rollback()
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create comment"
+            detail="Failed to create comment",
+            error_code=INTERNAL_SERVER_ERROR
         )
 
 async def get_post_detail(post_id: str, user, session: AsyncSession):
     try:
         post_uuid = UUID(post_id)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid post ID format")
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Invalid post ID format",
+            error_code=POST_INVALID_ID_FORMAT
+        )
     
 
     result = await session.execute(
@@ -282,47 +330,58 @@ async def get_post_detail(post_id: str, user, session: AsyncSession):
     post = result.scalar_one_or_none()
     
     if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-    
-    #
-    upvote_result = await session.execute(
-        select(Upvote).where(
-            Upvote.user_id == user.id,
-            Upvote.post_id == post.id
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Post not found",
+            error_code=POST_NOT_FOUND
         )
-    )
-    is_upvoted = upvote_result.scalar_one_or_none() is not None
     
-    #
-    comments_list = [
-        CommentResponse(
-            id=str(comment.id),
-            user_id=str(comment.user_id),
-            user_email=comment.user.email if comment.user else "Unknown",
-            username=comment.user.username if comment.user else "Unknown",
-            content=comment.content,
-            created_at=comment.created_at.isoformat()
+    try:
+        upvote_result = await session.execute(
+            select(Upvote).where(
+                Upvote.user_id == user.id,
+                Upvote.post_id == post.id
+            )
         )
-        for comment in sorted(post.comments, key=lambda c: c.created_at, reverse=True)
-    ]
-    
-    return PostResponseModel(
-        id=str(post.id),
-        user_id=str(post.user_id),
-        caption=post.caption,
-        url=post.url,
-        file_type=post.file_type,
-        created_at=post.created_at.isoformat(),
-        is_owner=post.user_id == user.id,
-        is_upvoted_by_me=is_upvoted,
-        upvote_count=post.upvote_count,
-        comment_count=post.comment_count,
-        user_info=UserReadModel(
-            email=post.user.email if post.user else "Unknown",
-            username=post.user.username if post.user else "Unknown"
-        ),
-        comments=comments_list
-    )
+        is_upvoted = upvote_result.scalar_one_or_none() is not None
+        
+        comments_list = [
+            CommentResponse(
+                id=str(comment.id),
+                user_id=str(comment.user_id),
+                user_email=comment.user.email if comment.user else "Unknown",
+                username=comment.user.username if comment.user else "Unknown",
+                content=comment.content,
+                created_at=comment.created_at.isoformat()
+            )
+            for comment in sorted(post.comments, key=lambda c: c.created_at, reverse=True)
+        ]
+        
+        return PostResponseModel(
+            id=str(post.id),
+            user_id=str(post.user_id),
+            caption=post.caption,
+            url=post.url,
+            file_type=post.file_type,
+            created_at=post.created_at.isoformat(),
+            is_owner=post.user_id == user.id,
+            is_upvoted_by_me=is_upvoted,
+            upvote_count=post.upvote_count,
+            comment_count=post.comment_count,
+            user_info=UserReadModel(
+                id=str(post.user.id),
+                email=post.user.email if post.user else "Unknown",
+                username=post.user.username if post.user else "Unknown"
+            ),
+            comments=comments_list
+        )
+    except Exception as e:
+        logging.error(f"Error processing post detail: {str(e)}", exc_info=True)
+        raise AppException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process post details",
+            error_code=INTERNAL_SERVER_ERROR
+        )
 
 async def get_feed_service(
     skip: int = 0,
@@ -333,15 +392,17 @@ async def get_feed_service(
 ) -> list[PostResponseModel]:
     
     if skip < 0 or limit < 1 or limit > 100:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid pagination parameters"
+            detail="Invalid pagination parameters",
+            error_code=INVALID_PAGINATION
         )
     
     if sort_by not in ["new", "top"]:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="sort_by must be 'new' or 'top'"
+            detail="sort_by must be 'new' or 'top'",
+            error_code=POST_INVALID_SORT_KEY
         )
     
     try:
@@ -403,7 +464,7 @@ async def get_feed_service(
                 file_type=post.file_type,
                 created_at=post.created_at.isoformat(),
                 is_owner=user.id == post.user_id if user else False,
-                is_upvoted_by_me=post.id in upvoted_post_ids,  # ← Set lookup O(1)
+                is_upvotd_by_me=post.id in upvoted_post_ids,  # ← Set lookup O(1)
                 upvote_count=post.upvote_count,
                 comment_count=post.comment_count,
                 user_info=UserReadModel(
@@ -420,7 +481,8 @@ async def get_feed_service(
         
     except Exception as e:
         logging.error(f"Error fetching feed: {str(e)}", exc_info=True)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch feed"
+            detail="Failed to fetch feed",
+            error_code=INTERNAL_SERVER_ERROR
         )

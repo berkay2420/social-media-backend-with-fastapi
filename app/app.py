@@ -14,6 +14,7 @@ from app.database.db import create_db_and_tables, get_async_session, Post, User,
 from app.routers.auth_router import router as auth_router
 from app.routers.posts_router import router as posts_router
 from app.routers.user_router import router as users_router
+from app.exception_utils import AppException
 
 origins = [
     "http://localhost:5173",
@@ -28,6 +29,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+@app.exception_handler(AppException)
+async def app_exception_handler(request, exc: AppException):
+    return {
+        "detail": exc.detail,
+        "error_code": exc.error_code,
+        "timestamp": exc.timestamp,
+        "path": str(request.url.path)
+    }
+
 
 app.add_middleware(
     CORSMiddleware,

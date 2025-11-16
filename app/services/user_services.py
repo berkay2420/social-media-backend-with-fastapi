@@ -5,8 +5,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.database.db import User, Post, Upvote
-from app.database.schemas import UserReadModel, UserUpdateModel, UserDetailResponse, DeletionResponse, CurrentUserResponse
+from app.database.schemas import UserReadModel, UserUpdateModel, UserDetailResponse, DeletionResponse, CurrentUserResponse, ErrorResponse
 from sqlalchemy.sql import func
+from app.exception_utils import AppException 
+from app.exception_utils import (              
+    USER_NOT_FOUND, 
+    INVALID_USER_ID_FORMAT, 
+    PERMISSION_DENIED,
+    INTERNAL_SERVER_ERROR,
+    INVALID_PAGINATION
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +45,22 @@ async def get_current_user_service(
             detail="Failed to retrieve user profile"
         )
         
-async def get_user_detail(user_id: str, session: AsyncSession) -> UserDetailResponse:
+async def get_user_detail(user_id: str, current_user: User, session: AsyncSession) -> UserDetailResponse:
     
     try:
         user_uuid = UUID(user_id)
     except ValueError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
+            detail="Invalid user ID format",
+            error_code=INVALID_USER_ID_FORMAT
+        )
+        
+    if str(current_user.id) != user_id and not current_user.is_superuser:
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied. You can only delete your own account",
+            error_code=PERMISSION_DENIED
         )
     
     result = await session.execute(
@@ -54,9 +71,10 @@ async def get_user_detail(user_id: str, session: AsyncSession) -> UserDetailResp
     user = result.scalar_one_or_none()
     
     if not user:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="User not found",
+            error_code=USER_NOT_FOUND
         )
     
     try:
@@ -72,18 +90,20 @@ async def get_user_detail(user_id: str, session: AsyncSession) -> UserDetailResp
         )
     except Exception as e:
         logger.error(f"Error retrieving user detail: {str(e)}", exc_info=True)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve user details"
+            detail="Failed to retrieve user details",
+            error_code=INTERNAL_SERVER_ERROR
         )
 
 
 async def get_all_users(skip: int = 0, limit: int = 10, session: AsyncSession = None) -> list[UserReadModel]:
     
     if skip < 0 or limit < 1:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid pagination parameters"
+            detail="Invalid pagination parameters",
+            error_code=INVALID_PAGINATION
         )
     
     if limit > 100:
@@ -107,9 +127,10 @@ async def get_all_users(skip: int = 0, limit: int = 10, session: AsyncSession = 
         ]
     except Exception as e:
         logger.error(f"Error retrieving users list: {str(e)}", exc_info=True)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve users"
+            detail="Failed to retrieve users",
+            error_code=INTERNAL_SERVER_ERROR
         )
 
 
@@ -118,16 +139,18 @@ async def update_user(user_id: str, update_data: UserUpdateModel, current_user: 
     try:
         user_uuid = UUID(user_id)
     except ValueError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
+            detail="Invalid user ID format",
+            error_code=INVALID_USER_ID_FORMAT
         )
     
     # Authorization check: users can only update their own profile
     if str(current_user.id) != user_id and not current_user.is_superuser:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied. You can only update your own profile"
+            detail="Permission denied. You can only update your own profile",
+            error_code=PERMISSION_DENIED
         )
     
     result = await session.execute(
@@ -136,9 +159,10 @@ async def update_user(user_id: str, update_data: UserUpdateModel, current_user: 
     user = result.scalar_one_or_none()
     
     if not user:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="User not found",
+            error_code=USER_NOT_FOUND
         )
     
     try:
@@ -162,9 +186,10 @@ async def update_user(user_id: str, update_data: UserUpdateModel, current_user: 
     except Exception as e:
         await session.rollback()
         logger.error(f"Error updating user: {str(e)}", exc_info=True)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update user"
+            detail="Failed to update user",
+            error_code=INTERNAL_SERVER_ERROR
         )
 
 
@@ -173,16 +198,18 @@ async def delete_user(user_id: str, current_user: User, session: AsyncSession) -
     try:
         user_uuid = UUID(user_id)
     except ValueError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
+            detail="Invalid user ID format",
+            error_code=INVALID_USER_ID_FORMAT
         )
     
     
     if str(current_user.id) != user_id and not current_user.is_superuser:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied. You can only delete your own account"
+            detail="Permission denied. You can only delete your own account",
+            error_code=PERMISSION_DENIED
         )
     
     result = await session.execute(
@@ -191,9 +218,10 @@ async def delete_user(user_id: str, current_user: User, session: AsyncSession) -
     user = result.scalar_one_or_none()
     
     if not user:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="User not found",
+            error_code=USER_NOT_FOUND
         )
     
     try:
@@ -206,9 +234,10 @@ async def delete_user(user_id: str, current_user: User, session: AsyncSession) -
     except Exception as e:
         await session.rollback()
         logger.error(f"Error deleting user: {str(e)}", exc_info=True)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete user"
+            detail="Failed to delete user",
+            error_code=INTERNAL_SERVER_ERROR
         )
 
 
@@ -217,15 +246,17 @@ async def get_user_posts(user_id: str, skip: int = 0, limit: int = 10, session: 
     try:
         user_uuid = UUID(user_id)
     except ValueError:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
+            detail="Invalid user ID format",
+            error_code=INVALID_USER_ID_FORMAT
         )
     
     if skip < 0 or limit < 1:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid pagination parameters"
+            detail="Invalid pagination parameters",
+            error_code=INVALID_PAGINATION
         )
     
     if limit > 100:
@@ -237,9 +268,10 @@ async def get_user_posts(user_id: str, skip: int = 0, limit: int = 10, session: 
     user = result.scalar_one_or_none()
     
     if not user:
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="User not found",
+            error_code=USER_NOT_FOUND
         )
     
     try:
@@ -252,9 +284,11 @@ async def get_user_posts(user_id: str, skip: int = 0, limit: int = 10, session: 
         posts = posts_result.scalars().all()
         
         return posts
+    
     except Exception as e:
         logger.error(f"Error retrieving user posts: {str(e)}", exc_info=True)
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve user posts"
+            detail="Failed to retrieve user posts",
+            error_code=INTERNAL_SERVER_ERROR
         )
