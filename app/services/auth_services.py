@@ -4,11 +4,14 @@ from sqlalchemy import select
 from app.database.db import User
 import uuid
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from app.database.schemas import UserCreateModel, UserLoginModel, UserReadModel
+from app.database.schemas import UserCreateModel, UserLoginModel, UserReadModel, RefreshTokenRequest
 from app.utils import verify_password, create_access_token, generate_hash
-from datetime import timedelta
-from fastapi.responses import JSONResponse
+from app.utils import create_access_token
+from datetime import timedelta , datetime, timezone
+from app.utils import decode_token
 import logging
+
+import jwt
 
 REFRESH_TOKEN_EXPIRY = 2
 
@@ -93,6 +96,13 @@ async def login(login_data: UserLoginModel, session: AsyncSession):
         expiry=timedelta(days=REFRESH_TOKEN_EXPIRY)
     )
 
+    user.refresh_token = refresh_token
+    user.refresh_token_expires_at = datetime.now() + timedelta(days=7)
+    session.add(user)
+    
+    await session.commit()
+    
+    
     return {
         "message": "Login Successful",
         "access_token": access_token,
@@ -103,3 +113,66 @@ async def login(login_data: UserLoginModel, session: AsyncSession):
             username=user.username
         )
     }
+    
+    
+async def refresh_access_token_service(refresh_token: str,
+                               session: AsyncSession):
+    try:
+        token_data = decode_token(refresh_token)
+        if not token_data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        user_id = token_data['user']['user_id']
+        user = await session.execute(select(User).where(User.id == user_id))
+        user = user.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
+        if user.refresh_token != refresh_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token mismatch"
+            )
+        if user.refresh_token_expires_at < datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token expired"
+            )
+            
+        new_access_token = create_access_token(
+            user_data={
+                'email': user.email,
+                'user_uuid': str(user.id),
+            },
+            expiry=timedelta(minutes=15)
+        )
+        
+        logging.info(f"Access token refreshed for user: {user.id}")
+        
+        return {
+            "access_token": new_access_token,
+            "token_type": "bearer"
+        }
+        
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token expired"
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        )
+    except Exception as e:
+        logging.error(f"Error refreshing token: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to refresh token"
+        )

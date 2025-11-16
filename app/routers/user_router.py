@@ -8,18 +8,26 @@ from app.database.schemas import (
     UserReadModel,
     UserUpdateModel,
     UserDetailResponse,
-    DeletionResponse
+    DeletionResponse,
+    CurrentUserResponse
 )
 from app.services.user_services import (
     get_user_detail,
     get_all_users,
     update_user,
     delete_user,
-    get_user_posts
+    get_user_posts,
+    get_current_user_service
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
 
+@router.get("/me", response_model=CurrentUserResponse)
+async def get_current_user(
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session)
+):
+    return await get_current_user_service(user, session)
 
 @router.get("/admin/users", response_model=list[UserReadModel])
 async def list_users_route(
@@ -49,10 +57,10 @@ async def update_user_route(
     return await update_user(user_id, update_data, current_user, session)
 
 
-@router.delete("/{user_id}", response_model=DeletionResponse, status_code=status.HTTP_200_OK)
+@router.delete("/admin/{user_id}", response_model=DeletionResponse, status_code=status.HTTP_200_OK)
 async def delete_user_route(
     user_id: str,
-    current_user: User = Depends(current_active_user),
+    current_user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_async_session)
 ):
     

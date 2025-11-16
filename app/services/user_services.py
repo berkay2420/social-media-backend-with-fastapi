@@ -5,12 +5,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.database.db import User, Post, Upvote
-from app.database.schemas import UserReadModel, UserUpdateModel, UserDetailResponse, DeletionResponse
+from app.database.schemas import UserReadModel, UserUpdateModel, UserDetailResponse, DeletionResponse, CurrentUserResponse
 from sqlalchemy.sql import func
 
 logger = logging.getLogger(__name__)
 
 
+async def get_current_user_service(
+    current_user: User,
+    session: AsyncSession
+):
+    try:
+        await session.refresh(current_user, ["posts"])
+        
+        posts_count = len(current_user.posts) if current_user.posts else 0
+        
+        return CurrentUserResponse(
+            id=str(current_user.id),
+            email=current_user.email,
+            username=current_user.username,
+            total_upvotes=current_user.total_upvotes,
+            posts_count=posts_count,
+            #created_at=current_user.created_at.isoformat() if current_user.created_at else None
+        )
+
+    except Exception as e:
+        logger.error(f"Error retrieving current user: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve user profile"
+        )
+        
 async def get_user_detail(user_id: str, session: AsyncSession) -> UserDetailResponse:
     
     try:

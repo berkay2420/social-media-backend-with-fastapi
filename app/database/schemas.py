@@ -17,6 +17,22 @@ class UserReadModel(BaseModel):
     class Config:
         from_attributes = True
 
+class CurrentUserResponse(BaseModel):
+    
+    id: str
+    email: str
+    username: str
+    total_upvotes: int
+    posts_count: int  
+    
+    @field_validator('id', mode='before')
+    @classmethod
+    def convert_id_to_str(cls, v):
+        return str(v) if v else None
+    
+    class Config:
+        from_attributes = True
+
 class CommentCreateModel(BaseModel):
     content: str = Field(..., min_length=1, max_length=1000)
 
@@ -149,3 +165,5 @@ class UserDetailResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str

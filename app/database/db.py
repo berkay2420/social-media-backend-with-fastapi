@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship, column_property
 from sqlalchemy.sql import select, func
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from fastapi_users.db import SQLAlchemyUserDatabase, SQLAlchemyBaseUserTableUUID
 
@@ -30,6 +30,9 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     total_upvotes = Column(Integer, default=0, nullable=False)
     
     comments = relationship("Comment", back_populates="user", cascade="all, delete-orphan")
+    
+    refresh_token = Column(String, nullable=True)
+    refresh_token_expires_at = Column(DateTime(timezone=True), nullable=True)
 
 class Upvote(Base):
     __tablename__ = "upvotes"
