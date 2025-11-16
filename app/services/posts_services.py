@@ -324,3 +324,103 @@ async def get_post_detail(post_id: str, user, session: AsyncSession):
         comments=comments_list
     )
 
+async def get_feed_service(
+    skip: int = 0,
+    limit: int = 10,
+    sort_by: str = "new",
+    user: User = None,
+    session: AsyncSession = None
+) -> list[PostResponseModel]:
+    
+    if skip < 0 or limit < 1 or limit > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters"
+        )
+    
+    if sort_by not in ["new", "top"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="sort_by must be 'new' or 'top'"
+        )
+    
+    try:
+        # posts + comments
+        query = select(Post).options(
+            selectinload(Post.user),
+            selectinload(Post.comments).selectinload(Comment.user)
+        )
+        
+        # Sort
+        if sort_by == "new":
+            query = query.order_by(Post.created_at.desc())
+        else:
+            query = query.order_by(Post.upvote_count.desc())
+        
+        query = query.offset(skip).limit(limit)
+        result = await session.execute(query)
+        posts = result.scalars().all()
+        
+        if not posts:
+            return []
+        
+        # IDs
+        post_ids = [post.id for post in posts]
+        
+        # upvotes
+        if user:
+            upvotes_result = await session.execute(
+                select(Upvote.post_id).where(
+                    Upvote.user_id == user.id,
+                    Upvote.post_id.in_(post_ids)
+                )
+            )
+            upvoted_post_ids = set(row[0] for row in upvotes_result.all())
+        else:
+            upvoted_post_ids = set()
+        
+        # Response
+        feed = []
+        for post in posts:
+            comments_list = [
+                CommentResponse(
+                    id=str(comment.id),
+                    user_id=str(comment.user_id),
+                    user_email=comment.user.email if comment.user else "Unknown",
+                    username=comment.user.username if comment.user else "Unknown",
+                    content=comment.content,
+                    created_at=comment.created_at.isoformat()
+                )
+                # Comments DESC 
+                for comment in post.comments
+            ]
+            
+            post_response = PostResponseModel(
+                id=str(post.id),
+                user_id=str(post.user_id),
+                caption=post.caption,
+                url=post.url,
+                file_type=post.file_type,
+                created_at=post.created_at.isoformat(),
+                is_owner=user.id == post.user_id if user else False,
+                is_upvoted_by_me=post.id in upvoted_post_ids,  # ← Set lookup O(1)
+                upvote_count=post.upvote_count,
+                comment_count=post.comment_count,
+                user_info=UserReadModel(
+                    id=str(post.user.id),
+                    email=post.user.email if post.user else "Unknown",
+                    username=post.user.username if post.user else "Unknown"
+                ),
+                comments=comments_list
+            )
+            feed.append(post_response)
+        
+        logging.info(f"Feed: {len(feed)} posts, sort_by={sort_by}, queries=2")
+        return feed
+        
+    except Exception as e:
+        logging.error(f"Error fetching feed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch feed"
+        )

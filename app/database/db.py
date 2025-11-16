@@ -84,7 +84,7 @@ class Post(Base):
         .scalar_subquery()
     )
     
-    comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan")
+    comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan", lazy="selectin")
     upvotes = relationship("Upvote", cascade="all, delete-orphan")
 
 class SortBy(str, Enum):

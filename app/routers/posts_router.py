@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, Depends, status
+from fastapi import APIRouter, UploadFile, File, Form, Depends, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from app.database.db import get_async_session, User
@@ -11,6 +11,7 @@ from app.services.posts_services import (
     remove_upvote,
     comment_on_post,
     get_post_detail,
+    get_feed_service
 )
 
 router = APIRouter(prefix="/posts")
@@ -76,3 +77,27 @@ async def get_post_detail_route(
     session: AsyncSession = Depends(get_async_session)
 ):
     return await get_post_detail(post_id, user, session)
+
+
+@router.get("", response_model=list[PostResponseModel], status_code=status.HTTP_200_OK)
+async def get_feed_route(
+    skip: int = Query(0, ge=0, description="Number of posts to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Number of posts to return"),
+    sort_by: str = Query("new", description="Sort by: 'new' (latest) or 'top' (most upvoted)"),
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get paginated feed of all posts
+    
+    - **skip**: Offset for pagination (default: 0)
+    - **limit**: Number of posts per page (default: 10, max: 100)
+    - **sort_by**: "new" for latest posts, "top" for most upvoted
+    """
+    return await get_feed_service(
+        skip=skip,
+        limit=limit,
+        sort_by=sort_by,
+        user=user,
+        session=session
+    )
