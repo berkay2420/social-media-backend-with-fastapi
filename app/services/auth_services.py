@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.database.db import User
 import uuid
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from app.database.schemas import UserCreateModel, UserLoginModel, UserReadModel, RefreshTokenRequest
+from app.database.schemas import UserCreateModel, UserLoginModel, UserReadModel, RefreshTokenRequest, LoginResponseModel, RefreshTokenResponse
 from app.utils import verify_password, create_access_token, generate_hash
 from app.utils import create_access_token
 from datetime import timedelta , datetime, timezone
@@ -27,7 +27,7 @@ import jwt
 REFRESH_TOKEN_EXPIRY = 2
 
 async def register(register_data: UserCreateModel,
-                   session: AsyncSession):
+                   session: AsyncSession)-> UserReadModel:
     
     username = register_data.username
     email = register_data.email
@@ -86,7 +86,7 @@ async def register(register_data: UserCreateModel,
         )
     
 
-async def login(login_data: UserLoginModel, session: AsyncSession):
+async def login(login_data: UserLoginModel, session: AsyncSession)-> LoginResponseModel:
     email = login_data.email
     password = login_data.password
     
@@ -117,16 +117,16 @@ async def login(login_data: UserLoginModel, session: AsyncSession):
         await session.commit()
         
         
-        return {
-            "message": "Login Successful",
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "user": UserReadModel(
+        return LoginResponseModel(
+            message="Login Successful",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user=UserReadModel(
                 id=str(user.id),
                 email=user.email,
                 username=user.username
             )
-        }
+        )
     
     except Exception as e:
         await session.rollback()
@@ -138,7 +138,7 @@ async def login(login_data: UserLoginModel, session: AsyncSession):
         )
     
 async def refresh_access_token_service(refresh_token: str,
-                               session: AsyncSession):
+                               session: AsyncSession)-> RefreshTokenResponse:
     try:
         token_data = decode_token(refresh_token)
         if not token_data:
@@ -181,10 +181,9 @@ async def refresh_access_token_service(refresh_token: str,
         
         logging.info(f"Access token refreshed for user: {user.id}")
         
-        return {
-            "access_token": new_access_token,
-            "token_type": "bearer"
-        }
+        return RefreshTokenResponse(
+            access_token=new_access_token
+        )
         
     except jwt.ExpiredSignatureError:
         raise AppException(
@@ -203,5 +202,28 @@ async def refresh_access_token_service(refresh_token: str,
         raise AppException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to refresh token",
+            error_code=INTERNAL_SERVER_ERROR
+        )
+        
+        
+async def logout(user: User, session: AsyncSession) -> dict:
+    """Logout user by invalidating refresh token"""
+    try:
+        # Invalidate refresh token
+        user.refresh_token = None
+        user.refresh_token_expires_at = None
+        session.add(user)
+        await session.commit()
+        
+        logging.info(f"User logged out: {user.id}")
+        
+        return {"message": "Logged out successfully"}
+        
+    except Exception as e:
+        await session.rollback()
+        logging.error(f"Error logging out user: {str(e)}", exc_info=True)
+        raise AppException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to logout",
             error_code=INTERNAL_SERVER_ERROR
         )

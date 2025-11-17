@@ -2,7 +2,7 @@ from collections.abc import AsyncGenerator
 import uuid
 from fastapi import Depends
 from sqlalchemy import Index
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer, Enum as SQLAlchemyEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship, column_property
@@ -50,7 +50,11 @@ class Comment(Base):
 
     post = relationship("Post", back_populates="comments")
     user = relationship("User")
-            
+
+class PostTypeEnum(str, Enum):
+    MEDIA = "media"
+    TEXT = "text"
+
 class Post(Base):
     __tablename__ = "posts"
     
@@ -58,14 +62,19 @@ class Post(Base):
     __table_args__ = (
         Index('idx_user_id', 'user_id'),
         Index('idx_created_at', 'created_at'),
+        Index('idx_post_type', 'post_type'),
     )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
+    
+    post_type = Column(SQLAlchemyEnum(PostTypeEnum), nullable=False, default=PostTypeEnum.MEDIA) # <-- ADDED
+    title = Column(String(300), nullable=True)
+    
     caption = Column(Text)
-    url = Column(String, nullable=False)
-    file_type = Column(String, nullable=False)
-    file_name = Column(String, nullable=False)
+    url = Column(String, nullable=True)
+    file_type = Column(String, nullable=True)
+    file_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     user = relationship("User", back_populates="posts")

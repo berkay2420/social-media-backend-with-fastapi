@@ -4,8 +4,8 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from app.database.db import User, Post, Upvote
-from app.database.schemas import UserReadModel, UserUpdateModel, UserDetailResponse, DeletionResponse, CurrentUserResponse, ErrorResponse
+from app.database.db import User, Post, Upvote, Comment
+from app.database.schemas import UserReadModel, UserUpdateModel, UserDetailResponse, DeletionResponse, CurrentUserResponse, ErrorResponse, PostResponseModel
 from sqlalchemy.sql import func
 from app.exception_utils import AppException 
 from app.exception_utils import (              
@@ -241,7 +241,7 @@ async def delete_user(user_id: str, current_user: User, session: AsyncSession) -
         )
 
 
-async def get_user_posts(user_id: str, skip: int = 0, limit: int = 10, session: AsyncSession = None) -> list:
+async def get_user_posts(user_id: str, skip: int = 0, limit: int = 10, session: AsyncSession = None) -> list[PostResponseModel]:
     
     try:
         user_uuid = UUID(user_id)
@@ -252,7 +252,7 @@ async def get_user_posts(user_id: str, skip: int = 0, limit: int = 10, session: 
             error_code=INVALID_USER_ID_FORMAT
         )
     
-    if skip < 0 or limit < 1:
+    if skip < 0 or limit < 1 or limit > 100:
         raise AppException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid pagination parameters",
@@ -277,11 +277,20 @@ async def get_user_posts(user_id: str, skip: int = 0, limit: int = 10, session: 
     try:
         posts_result = await session.execute(
             select(Post)
+            .options(
+                selectinload(Post.user),
+                selectinload(Post.comments).selectinload(Comment.user),
+                selectinload(Post.upvotes)
+            )
             .where(Post.user_id == user_uuid)
+            .order_by(Post.created_at.desc())  # ← Sort ekle
             .offset(skip)
             .limit(limit)
         )
         posts = posts_result.scalars().all()
+        
+        if not posts:  
+            return []  
         
         return posts
     

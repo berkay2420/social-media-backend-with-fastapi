@@ -68,6 +68,60 @@ class PostResponseModel(BaseModel):
     class Config:
         from_attributes = True
 
+class PostCreateMediaModel(BaseModel):
+    """Schema for creating a media post (image/video)"""
+    caption: str = Field(..., min_length=1, max_length=2000)
+
+class PostCreateTextModel(BaseModel):
+    """Schema for creating a text post (Reddit-style)"""
+    title: str = Field(..., min_length=1, max_length=300)
+    content: str = Field(..., min_length=1, max_length=5000)
+
+class PostCreateModel(BaseModel):
+    """Union type for both post types"""
+    post_type: str  # "media" or "text"
+    caption: str | None = None  # For media posts
+    title: str | None = None  # For text posts
+    content: str | None = None  # For text posts
+
+class TextPostCreateRequest(BaseModel):
+    """Schema for creating a text post"""
+    title: str = Field(..., min_length=1, max_length=300, description="Post title")
+    content: str = Field(..., min_length=1, max_length=5000, description="Post content/body")
+    
+    class Config:
+        from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "title": "My thoughts on FastAPI",
+                "content": "This framework is amazing because it's fast..."
+            }
+        }
+
+
+class TextPostResponse(BaseModel):
+    """Response for a text post"""
+    id: str
+    user_id: str
+    post_type: str
+    title: str
+    content: str  # Same as caption in DB
+    created_at: str
+    is_owner: bool
+    upvote_count: int
+    comment_count: int
+    is_upvoted_by_me: bool
+    user_info: UserReadModel
+    comments: list[CommentResponse]
+    
+    @field_validator('id', mode='before')
+    @classmethod
+    def convert_id_to_str(cls, v):
+        return str(v) if v else None
+    
+    class Config:
+        from_attributes = True
+
 class PasswordValidator:
     MIN_LENGTH = 10
     UPPERCASE = r'[A-Z]'
@@ -117,6 +171,12 @@ class LoginResponseModel(BaseModel):
 class UserUpdate(schemas.BaseUserUpdate):
     pass
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+    
+class RefreshTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 class UpvoteCreateModel(BaseModel):
     """Request model for creating an upvote"""
     pass

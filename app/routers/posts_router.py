@@ -8,10 +8,13 @@ from app.database.schemas import (
     UpvoteResponse, 
     CommentResponse, 
     PostCreateModel, 
-    PostResponseModel, 
+    PostResponseModel,
+    TextPostResponse,
+    TextPostCreateRequest,
     CommentCreateModel,
     AppErrorResponse,
-    ValidationErrorResponse
+    ValidationErrorResponse,
+    UserReadModel
 )
 from app.services.posts_services import (
     upload_post,
@@ -20,7 +23,23 @@ from app.services.posts_services import (
     remove_upvote,
     comment_on_post,
     get_post_detail,
-    get_feed_service
+    get_feed_service,
+    upload_post_media,
+    create_text_post
+)
+from app.exception_utils import AppException
+from app.exception_utils import (
+    POST_INVALID_ID_FORMAT,
+    POST_NOT_FOUND,
+    POST_INVALID_FILE_TYPE,
+    POST_FILE_TOO_LARGE,
+    POST_UPLOAD_FAILED,
+    POST_ALREADY_UPVOTED,
+    UPVOTE_NOT_FOUND,
+    POST_INVALID_SORT_KEY,
+    PERMISSION_DENIED,
+    INTERNAL_SERVER_ERROR,
+    INVALID_PAGINATION
 )
 
 router = APIRouter(prefix="/posts", tags=["posts"])
@@ -274,4 +293,76 @@ async def get_feed_route(
         sort_by=sort_by,
         user=user,
         session=session
+    )
+    
+@router.post(
+    "/media/upload",
+    response_model=PostResponseModel,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"model": AppErrorResponse},
+        status.HTTP_401_UNAUTHORIZED: {"model": AppErrorResponse},
+        status.HTTP_413_CONTENT_TOO_LARGE: {"model": AppErrorResponse},
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse}
+    }
+)
+async def upload_media_post(
+    file: UploadFile = File(...),
+    caption: str = Form(...),
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session)
+):
+    """Upload a media post (image or video)."""
+    return await upload_post_media(caption, file, user, session)
+
+
+@router.post(
+    "/text",
+    response_model=TextPostResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "model": AppErrorResponse,
+            "description": "Missing title or content"
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "model": AppErrorResponse,
+            "description": "Authentication required"
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ValidationErrorResponse,
+            "description": "Validation error (title/content too long/short)"
+        },
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "model": AppErrorResponse,
+            "description": "Failed to create text post"
+        }
+    }
+)
+async def create_text_post_route(
+    request_body: TextPostCreateRequest,  
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session)
+):
+    """Create a text post (Reddit-style, no media)."""
+    post = await create_text_post(request_body.title, request_body.content, user, session)
+    
+    # Build response
+    return TextPostResponse(
+        id=str(post.id),
+        user_id=str(post.user_id),
+        post_type=post.post_type,
+        title=post.title,
+        content=post.caption,
+        created_at=post.created_at.isoformat(),
+        is_owner=post.user_id == user.id,
+        upvote_count=post.upvote_count,
+        comment_count=post.comment_count,
+        is_upvoted_by_me=False,  # New posts can't be upvoted by creator yet
+        user_info=UserReadModel(
+            id=str(user.id),
+            email=user.email,
+            username=user.username
+        ),
+        comments=[]
     )

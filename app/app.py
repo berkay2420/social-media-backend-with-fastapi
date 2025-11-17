@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, Query
+from fastapi import FastAPI, Depends, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 #from app.database.schemas import UserCreate, UserRead, UserUpdate
 #from app.users import fastapi_users
@@ -31,13 +32,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 @app.exception_handler(AppException)
-async def app_exception_handler(request, exc: AppException):
-    return {
-        "detail": exc.detail,
-        "error_code": exc.error_code,
-        "timestamp": exc.timestamp,
-        "path": str(request.url.path)
-    }
+async def app_exception_handler(request: Request, exc: AppException):
+    return JSONResponse(
+        status_code=exc.status_code, 
+        content={
+            "detail": exc.detail,
+            "error_code": exc.error_code,
+            "timestamp": exc.timestamp,
+            "path": str(request.url.path)
+        }
+    )
 
 
 app.add_middleware(

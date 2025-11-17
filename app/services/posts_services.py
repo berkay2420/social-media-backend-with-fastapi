@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from app.database.db import Post, Upvote, Comment, User
+from app.database.db import Post, Upvote, Comment, User, PostTypeEnum
 from app.database.images import imagekit
 from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
 from app.database.schemas import PostCreateModel, UpvoteCreateModel, UpvoteResponse, CommentCreateModel, UserReadModel, CommentResponse, PostResponseModel
@@ -114,6 +114,110 @@ async def upload_post(post_data: PostCreateModel,
                 logging.warning(f"Failed to delete temp file: {e}")
         
         await file.close()
+
+async def upload_post_media(
+    caption: str,
+    file: UploadFile,
+    user: User,
+    session: AsyncSession
+):
+    
+    await validate_file(file)
+    
+    temp_file_path = None
+    try:
+        suffix = os.path.splitext(file.filename)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file_path = temp_file.name
+            await file.seek(0)
+            shutil.copyfileobj(file.file, temp_file)
+            
+        with open(temp_file_path, "rb") as f:
+            upload_result = imagekit.upload_file(
+                file=f,
+                file_name=file.filename,
+                options=UploadFileRequestOptions(
+                    use_unique_file_name=True,
+                    tags=["backend-upload"]
+                ),
+            )
+            
+        if upload_result.response_metadata.http_status_code != 200:
+            logging.error(f"ImageKit upload failed: {upload_result}")
+            raise AppException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to upload file to storage",
+                error_code=POST_UPLOAD_FAILED
+            )
+        
+        file_type = "video" if file.content_type.startswith("video/") else "image"
+
+        post = Post(
+            user_id=user.id,
+            post_type=PostTypeEnum.MEDIA,
+            caption=caption,
+            url=upload_result.url,
+            file_type=file_type,
+            file_name=upload_result.name
+        )
+        
+        session.add(post)
+        await session.commit()
+        await session.refresh(post)
+        
+        logging.info(f"Media post created: {post.id} by user {user.id}")
+        return post
+        
+    except AppException:
+        raise
+    except Exception as e:
+        logging.error(f"Error uploading media post: {str(e)}", exc_info=True)
+        await session.rollback()
+        raise AppException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create media post",
+            error_code=INTERNAL_SERVER_ERROR
+        )
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as e:
+                logging.warning(f"Failed to delete temp file: {e}")
+        
+        await file.close()
+
+
+async def create_text_post(
+    title: str,
+    content: str,
+    user: User,
+    session: AsyncSession
+):
+    
+    try:
+        post = Post(
+            user_id=user.id,
+            post_type=PostTypeEnum.TEXT,
+            title=title,
+            caption=content  # Store content in caption field
+        )
+        
+        session.add(post)
+        await session.commit()
+        await session.refresh(post)
+        
+        logging.info(f"Text post created: {post.id} by user {user.id}")
+        return post
+        
+    except Exception as e:
+        logging.error(f"Error creating text post: {str(e)}", exc_info=True)
+        await session.rollback()
+        raise AppException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create text post",
+            error_code=INTERNAL_SERVER_ERROR
+        )
 
 async def delete_post(post_id: str, 
                       user: User, 
@@ -323,7 +427,8 @@ async def get_post_detail(post_id: str, user, session: AsyncSession):
         select(Post)
         .options(
             selectinload(Post.user),
-            selectinload(Post.comments).selectinload(Comment.user)
+            selectinload(Post.comments).selectinload(Comment.user),
+            selectinload(Post.upvotes)
         )
         .where(Post.id == post_uuid)
     )
@@ -366,8 +471,8 @@ async def get_post_detail(post_id: str, user, session: AsyncSession):
             created_at=post.created_at.isoformat(),
             is_owner=post.user_id == user.id,
             is_upvoted_by_me=is_upvoted,
-            upvote_count=post.upvote_count,
-            comment_count=post.comment_count,
+            upvote_count=len(post.upvotes),
+            comment_count=len(post.comments),
             user_info=UserReadModel(
                 id=str(post.user.id),
                 email=post.user.email if post.user else "Unknown",
@@ -409,14 +514,25 @@ async def get_feed_service(
         # posts + comments
         query = select(Post).options(
             selectinload(Post.user),
-            selectinload(Post.comments).selectinload(Comment.user)
+            selectinload(Post.comments).selectinload(Comment.user),
+            selectinload(Post.upvotes)
         )
         
         # Sort
         if sort_by == "new":
             query = query.order_by(Post.created_at.desc())
         else:
-            query = query.order_by(Post.upvote_count.desc())
+            query = select(Post).options(
+                selectinload(Post.user),
+                selectinload(Post.comments).selectinload(Comment.user),
+                selectinload(Post.upvotes) 
+            )
+            
+            if sort_by == "new":
+                query = query.order_by(Post.created_at.desc())
+            else: 
+                
+                query = query.order_by(Post.upvote_count.desc())
         
         query = query.offset(skip).limit(limit)
         result = await session.execute(query)
@@ -464,9 +580,9 @@ async def get_feed_service(
                 file_type=post.file_type,
                 created_at=post.created_at.isoformat(),
                 is_owner=user.id == post.user_id if user else False,
-                is_upvotd_by_me=post.id in upvoted_post_ids,  # ← Set lookup O(1)
-                upvote_count=post.upvote_count,
-                comment_count=post.comment_count,
+                is_upvoted_by_me=post.id in upvoted_post_ids,  # ← Set lookup O(1)
+                upvote_count=len(post.upvotes),
+                comment_count=len(post.comments),
                 user_info=UserReadModel(
                     id=str(post.user.id),
                     email=post.user.email if post.user else "Unknown",

@@ -11,7 +11,8 @@ from app.database.schemas import (
     DeletionResponse,
     CurrentUserResponse,
     ValidationErrorResponse,
-    AppErrorResponse
+    AppErrorResponse,
+    PostResponseModel
 )
 from app.services.user_services import (
     get_user_detail,
@@ -173,6 +174,7 @@ async def delete_user_route(
 
 
 @router.get("/{user_id}/posts", status_code=status.HTTP_200_OK,
+            response_model=list[PostResponseModel],
             responses={
                 status.HTTP_400_BAD_REQUEST: {
                     "model": AppErrorResponse,
