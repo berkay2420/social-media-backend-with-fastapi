@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import UUID
 
 from app.database.db import get_async_session, User
 from app.auth_dependencies import current_active_user, require_admin
@@ -27,14 +26,8 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 @router.get("/me", response_model=CurrentUserResponse,
             responses={
-        status.HTTP_401_UNAUTHORIZED: {
-            "model": AppErrorResponse,
-            "description": "Authentication required"
-        },
-        status.HTTP_500_INTERNAL_SERVER_ERROR: {
-            "model": AppErrorResponse,
-            "description": "Failed to retrieve user profile"
-        }
+        status.HTTP_401_UNAUTHORIZED: {"model": AppErrorResponse, "description": "Authentication required"},
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse, "description": "Failed to retrieve user profile"}
     })
 async def get_current_user(
     user: User = Depends(current_active_user),
@@ -45,22 +38,10 @@ async def get_current_user(
 
 @router.get("/admin/users", response_model=list[UserReadModel],
             responses={
-                status.HTTP_400_BAD_REQUEST: {
-                    "model": AppErrorResponse,
-                    "description": "Invalid pagination parameters"
-                },
-                status.HTTP_401_UNAUTHORIZED: {
-                    "model": AppErrorResponse,
-                    "description": "Authentication required"
-                },
-                status.HTTP_403_FORBIDDEN: {
-                    "model": AppErrorResponse,
-                    "description": "Admin access required"
-                },
-                status.HTTP_500_INTERNAL_SERVER_ERROR: {
-                    "model": AppErrorResponse,
-                    "description": "Failed to retrieve users"
-                }
+                status.HTTP_400_BAD_REQUEST: {"model": AppErrorResponse},
+                status.HTTP_401_UNAUTHORIZED: {"model": AppErrorResponse},
+                status.HTTP_403_FORBIDDEN: {"model": AppErrorResponse},
+                status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse}
             }
         )
 async def list_users_route(
@@ -68,31 +49,16 @@ async def list_users_route(
     session: AsyncSession = Depends(get_async_session)
 ): 
     """[Admin] Get a paginated list of all users."""
-    return await get_all_users(user, session)
+    return await get_all_users(skip=0, limit=100, session=session)
 
 
 @router.get("/admin/{user_id}", response_model=UserDetailResponse, status_code=status.HTTP_200_OK,
             responses={
-                status.HTTP_400_BAD_REQUEST: {
-                    "model": AppErrorResponse,
-                    "description": "Invalid user ID format"
-                },
-                status.HTTP_401_UNAUTHORIZED: {
-                    "model": AppErrorResponse,
-                    "description": "Authentication required"
-                },
-                status.HTTP_403_FORBIDDEN: {
-                    "model": AppErrorResponse,
-                    "description": "Admin access required"
-                },
-                status.HTTP_404_NOT_FOUND: {
-                    "model": AppErrorResponse,
-                    "description": "User not found"
-                },
-                status.HTTP_500_INTERNAL_SERVER_ERROR: {
-                    "model": AppErrorResponse,
-                    "description": "Failed to retrieve user details"
-                }
+                status.HTTP_400_BAD_REQUEST: {"model": AppErrorResponse},
+                status.HTTP_401_UNAUTHORIZED: {"model": AppErrorResponse},
+                status.HTTP_403_FORBIDDEN: {"model": AppErrorResponse},
+                status.HTTP_404_NOT_FOUND: {"model": AppErrorResponse},
+                status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse}
             })
 async def get_user(
     user_id: str,
@@ -100,35 +66,17 @@ async def get_user(
     session: AsyncSession = Depends(get_async_session)
 ):
     """[Admin] Get detailed information for a specific user."""
-    return await get_user_detail( user, user_id, session)
+    return await get_user_detail(user_id, user, session)
 
 
 @router.put("/{user_id}", response_model=UserReadModel, status_code=status.HTTP_200_OK,
             responses={
-                status.HTTP_400_BAD_REQUEST: {
-                    "model": AppErrorResponse,
-                    "description": "Invalid user ID format"
-                },
-                status.HTTP_401_UNAUTHORIZED: {
-                    "model": AppErrorResponse,
-                    "description": "Authentication required"
-                },
-                status.HTTP_403_FORBIDDEN: {
-                    "model": AppErrorResponse,
-                    "description": "Permission denied"
-                },
-                status.HTTP_404_NOT_FOUND: {
-                    "model": AppErrorResponse,
-                    "description": "User not found"
-                },
-                status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                    "model": ValidationErrorResponse,
-                    "description": "Validation error"
-                },
-                status.HTTP_500_INTERNAL_SERVER_ERROR: {
-                    "model": AppErrorResponse,
-                    "description": "Failed to update user"
-                }
+                status.HTTP_400_BAD_REQUEST: {"model": AppErrorResponse},
+                status.HTTP_401_UNAUTHORIZED: {"model": AppErrorResponse},
+                status.HTTP_403_FORBIDDEN: {"model": AppErrorResponse},
+                status.HTTP_404_NOT_FOUND: {"model": AppErrorResponse},
+                status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ValidationErrorResponse},
+                status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse}
             })
 async def update_user_route(
     user_id: str,
@@ -137,32 +85,16 @@ async def update_user_route(
     session: AsyncSession = Depends(get_async_session)
 ):
     """Update a user's profile. Users can only update their own profile."""
-   
     return await update_user(user_id, update_data, current_user, session)
 
 
 @router.delete("/admin/{user_id}", response_model=DeletionResponse, status_code=status.HTTP_200_OK,
                responses={
-                status.HTTP_400_BAD_REQUEST: {
-                    "model": AppErrorResponse,
-                    "description": "Invalid user ID format"
-                },
-                status.HTTP_401_UNAUTHORIZED: {
-                    "model": AppErrorResponse,
-                    "description": "Authentication required"
-                },
-                status.HTTP_403_FORBIDDEN: {
-                    "model": AppErrorResponse,
-                    "description": "Admin access required or permission denied"
-                },
-                status.HTTP_404_NOT_FOUND: {
-                    "model": AppErrorResponse,
-                    "description": "User not found"
-                },
-                status.HTTP_500_INTERNAL_SERVER_ERROR: {
-                    "model": AppErrorResponse,
-                    "description": "Failed to delete user"
-                }
+                status.HTTP_400_BAD_REQUEST: {"model": AppErrorResponse},
+                status.HTTP_401_UNAUTHORIZED: {"model": AppErrorResponse},
+                status.HTTP_403_FORBIDDEN: {"model": AppErrorResponse},
+                status.HTTP_404_NOT_FOUND: {"model": AppErrorResponse},
+                status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse}
             })
 async def delete_user_route(
     user_id: str,
@@ -176,18 +108,9 @@ async def delete_user_route(
 @router.get("/{user_id}/posts", status_code=status.HTTP_200_OK,
             response_model=list[PostResponseModel],
             responses={
-                status.HTTP_400_BAD_REQUEST: {
-                    "model": AppErrorResponse,
-                    "description": "Invalid user ID or pagination"
-                },
-                status.HTTP_404_NOT_FOUND: {
-                    "model": AppErrorResponse,
-                    "description": "User not found"
-                },
-                status.HTTP_500_INTERNAL_SERVER_ERROR: {
-                    "model": AppErrorResponse,
-                    "description": "Failed to retrieve user posts"
-                }
+                status.HTTP_400_BAD_REQUEST: {"model": AppErrorResponse},
+                status.HTTP_404_NOT_FOUND: {"model": AppErrorResponse},
+                status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse}
             }
             )
 async def get_user_posts_route(
@@ -198,4 +121,3 @@ async def get_user_posts_route(
 ):
     """Get a paginated list of posts from a specific user."""
     return await get_user_posts(user_id, skip=skip, limit=limit, session=session)
-

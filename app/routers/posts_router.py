@@ -1,8 +1,8 @@
 from fastapi import APIRouter, UploadFile, File, Form, Depends, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import UUID
+from datetime import datetime, timezone
 from app.database.db import get_async_session, User
-from app.auth_dependencies import current_active_user, require_admin
+from app.auth_dependencies import current_active_user
 from app.database.schemas import (
     DeletionResponse, 
     UpvoteResponse, 
@@ -26,20 +26,6 @@ from app.services.posts_services import (
     get_feed_service,
     upload_post_media,
     create_text_post
-)
-from app.exception_utils import AppException
-from app.exception_utils import (
-    POST_INVALID_ID_FORMAT,
-    POST_NOT_FOUND,
-    POST_INVALID_FILE_TYPE,
-    POST_FILE_TOO_LARGE,
-    POST_UPLOAD_FAILED,
-    POST_ALREADY_UPVOTED,
-    UPVOTE_NOT_FOUND,
-    POST_INVALID_SORT_KEY,
-    PERMISSION_DENIED,
-    INTERNAL_SERVER_ERROR,
-    INVALID_PAGINATION
 )
 
 router = APIRouter(prefix="/posts", tags=["posts"])
@@ -82,9 +68,8 @@ async def upload_file(
     session: AsyncSession = Depends(get_async_session)
 ):
     """Upload a new image or video post with a caption."""
-    post_data = PostCreateModel(caption=caption) 
-    # Note: Service call signature was (post_data, file, user, session)
-    # Swapping to match your original call
+    post_data = PostCreateModel(caption=caption, post_type="MEDIA")
+    
     return await upload_post(post_data, file, user, session)
 
 @router.delete(
@@ -294,30 +279,30 @@ async def get_feed_route(
         user=user,
         session=session
     )
-    
-@router.post(
-    "/media/upload",
-    response_model=PostResponseModel,
-    status_code=status.HTTP_201_CREATED,
-    responses={
-        status.HTTP_400_BAD_REQUEST: {"model": AppErrorResponse},
-        status.HTTP_401_UNAUTHORIZED: {"model": AppErrorResponse},
-        status.HTTP_413_CONTENT_TOO_LARGE: {"model": AppErrorResponse},
-        status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse}
-    }
-)
-async def upload_media_post(
-    file: UploadFile = File(...),
-    caption: str = Form(...),
-    user: User = Depends(current_active_user),
-    session: AsyncSession = Depends(get_async_session)
-):
-    """Upload a media post (image or video)."""
-    return await upload_post_media(caption, file, user, session)
 
+#NOT WORKING FOR NOW
+# @router.post(
+#     "/media/upload",
+#     response_model=PostResponseModel,
+#     status_code=status.HTTP_201_CREATED,
+#     responses={
+#         status.HTTP_400_BAD_REQUEST: {"model": AppErrorResponse},
+#         status.HTTP_401_UNAUTHORIZED: {"model": AppErrorResponse},
+#         status.HTTP_413_CONTENT_TOO_LARGE: {"model": AppErrorResponse},
+#         status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": AppErrorResponse}
+#     }
+# )
+# async def upload_media_post(
+#     file: UploadFile = File(...),
+#     caption: str = Form(...),
+#     user: User = Depends(current_active_user),
+#     session: AsyncSession = Depends(get_async_session)
+# ):
+#     """Upload a media post (image or video)."""
+#     return await upload_post_media(caption, file, user, session)
 
 @router.post(
-    "/text",
+    "/upload/text",
     response_model=TextPostResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
@@ -347,18 +332,24 @@ async def create_text_post_route(
     """Create a text post (Reddit-style, no media)."""
     post = await create_text_post(request_body.title, request_body.content, user, session)
     
-    # Build response
+    await session.refresh(user)
+    
+    # Ensure created_at is never None
+    created_at = post.created_at
+    if created_at is None:
+        created_at = datetime.now(timezone.utc)
+    
     return TextPostResponse(
         id=str(post.id),
         user_id=str(post.user_id),
-        post_type=post.post_type,
+        post_type=post.post_type.value,
         title=post.title,
-        content=post.caption,
-        created_at=post.created_at.isoformat(),
-        is_owner=post.user_id == user.id,
-        upvote_count=post.upvote_count,
-        comment_count=post.comment_count,
-        is_upvoted_by_me=False,  # New posts can't be upvoted by creator yet
+        content=post.caption,  # Map caption to content
+        created_at=created_at.isoformat() if isinstance(created_at, datetime) else str(created_at),
+        is_owner=True,
+        upvote_count=0,
+        comment_count=0,
+        is_upvoted_by_me=False,
         user_info=UserReadModel(
             id=str(user.id),
             email=user.email,

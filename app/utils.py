@@ -6,75 +6,46 @@ import os
 import uuid
 import logging
 
-
 load_dotenv()
 
-password_context = CryptContext(schemes=["bcrypt"])
+password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-ACCESS_TOKEN_EXPIRY =  600
-REFRESH_TOKEN_EXPIRY = 7*24*3600
+# Constants
+ACCESS_TOKEN_EXPIRY = 600  # 10 minutes
+REFRESH_TOKEN_EXPIRY_DAYS = 7 
 
 def generate_hash(password: str) -> str:
-    hash = password_context.hash(password)
-    
-    return hash
+    return password_context.hash(password)
 
 def verify_password(password: str, hash: str) -> bool:
     return password_context.verify(password, hash)
 
-
 def create_access_token(user_data: dict, 
                         expiry: timedelta = None, 
                         refresh: bool = False):
-
-    payload = {}
     
+    payload = {}
     payload['user'] = user_data
     payload['exp'] = datetime.now(timezone.utc) + (expiry if expiry is not None else timedelta(seconds=ACCESS_TOKEN_EXPIRY))
-    
     payload['jti'] = str(uuid.uuid4())
-
-    payload['refresh']  = refresh
+    payload['refresh'] = refresh
     
-    
-    token = jwt.encode(
-        payload=payload,
-        key = os.getenv("JWT_SECRET"),
-        algorithm="HS256"
-    )
-    
-    return token
-
-
-def create_refresh_token(user_data: dict, expiry: timedelta = None):
-    
-    
-    payload = {
-        "user": user_data,
-        "exp": datetime.now() + (expiry if expiry else timedelta(seconds=REFRESH_TOKEN_EXPIRY)),
-        "jti": str(uuid.uuid4()),
-        "refresh": True
-    }
-
     token = jwt.encode(
         payload=payload,
         key=os.getenv("JWT_SECRET"),
         algorithm="HS256"
     )
-
     return token
 
 def decode_token(token: str) -> dict:
     try:
         token_data = jwt.decode(
             jwt=token,
-            key = os.getenv("JWT_SECRET"),
+            key=os.getenv("JWT_SECRET"),
             algorithms=["HS256"]
         )
         return token_data
-    
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError) as e:
-        logging.exception(e)
+        # Log warning instead of exception for expected auth failures
+        logging.warning(f"Token decoding failed: {e}")
         return None
-        
-    

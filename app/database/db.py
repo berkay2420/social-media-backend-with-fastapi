@@ -46,14 +46,14 @@ class Comment(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
     post_id = Column(UUID(as_uuid=True), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     post = relationship("Post", back_populates="comments")
     user = relationship("User")
 
 class PostTypeEnum(str, Enum):
-    MEDIA = "media"
-    TEXT = "text"
+    MEDIA = "MEDIA"  
+    TEXT = "TEXT" 
 
 class Post(Base):
     __tablename__ = "posts"
@@ -68,14 +68,14 @@ class Post(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
     
-    post_type = Column(SQLAlchemyEnum(PostTypeEnum), nullable=False, default=PostTypeEnum.MEDIA) # <-- ADDED
+    post_type = Column(SQLAlchemyEnum(PostTypeEnum), nullable=False, default=PostTypeEnum.MEDIA)
     title = Column(String(300), nullable=True)
     
     caption = Column(Text)
     url = Column(String, nullable=True)
     file_type = Column(String, nullable=True)
     file_name = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     user = relationship("User", back_populates="posts")
     
@@ -93,7 +93,7 @@ class Post(Base):
         .scalar_subquery()
     )
     
-    comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan", lazy="selectin")
+    comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan")
     upvotes = relationship("Upvote", cascade="all, delete-orphan")
 
 class SortBy(str, Enum):
@@ -119,7 +119,7 @@ async def get_user_db(session: AsyncSession = Depends(get_async_session)):
 async def test_connection():
     try:
         async with engine.begin() as conn:
-            await conn.execute("SELECT 1")
+            await conn.execute(select(1)) 
         print("✅ Successfully connected to Supabase!")
     except Exception as e:
         print(f"❌ Connection failed: {e}")

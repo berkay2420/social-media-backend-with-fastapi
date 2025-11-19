@@ -6,9 +6,10 @@ from app.utils import decode_token
 from sqlalchemy import select
 import jwt
 import logging
+from uuid import UUID
 
 async def current_active_user(token: str = Depends(HTTPBearer()),
-                           session: AsyncSession = Depends(get_async_session)):
+                              session: AsyncSession = Depends(get_async_session)):
     
     try:
         token_data = decode_token(token.credentials)
@@ -19,9 +20,19 @@ async def current_active_user(token: str = Depends(HTTPBearer()),
                 detail="Invalid token"
             )
         
-        user_id = token_data['user']['user_id']
-        user = await session.execute(select(User).where(User.id == user_id))
-        user = user.scalar_one_or_none()
+        
+        try:
+            user_id = token_data['user']['user_id']
+            # Validate format
+            UUID(user_id) 
+        except (KeyError, ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token payload invalid"
+            )
+
+        user_result = await session.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
         
         if not user:
             raise HTTPException(
@@ -37,27 +48,16 @@ async def current_active_user(token: str = Depends(HTTPBearer()),
             
         return user
     
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
     except HTTPException:
         raise
-    except jwt.InvalidTokenError:  
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
     except Exception as e:
-        logging.error(f"Auth error: {str(e)}", exc_info=True)
+        logging.error(f"Auth dependency error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials"
+            detail="Could not validate credentials"
         )
 
 async def require_admin(user: User = Depends(current_active_user)):
-    if user.is_superuser != True:
+    if not user.is_superuser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user
